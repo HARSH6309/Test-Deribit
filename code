@@ -1,0 +1,143 @@
+#include <iostream>
+#include <string>
+#include <curl/curl.h>
+#include <json/json.h>
+
+const std::string CLIENT_ID = "3t4NGkDj";
+const std::string CLIENT_SECRET = "zIkXisYBeLKti4k2Udqrm-XkByzKVYoIpOiGtop0b-w";
+const std::string BASE_URL = "https://test.deribit.com/api/v2/";
+
+class DeribitAPI {
+public:
+    DeribitAPI() {
+        curl_global_init(CURL_GLOBAL_DEFAULT);
+        curl = curl_easy_init();
+    }
+
+    ~DeribitAPI() {
+        curl_easy_cleanup(curl);
+        curl_global_cleanup();
+    }
+
+    Json::Value placeOrder(const std::string& instrument, const std::string& side, double amount, double price) {
+        Json::Value order;
+        order["jsonrpc"] = "2.0";
+        order["id"] = 1;
+        order["method"] = "private/buy"; // Change to sell for sell orders
+        order["params"]["instrument_name"] = instrument;
+        order["params"]["amount"] = amount;
+        order["params"]["price"] = price;
+        order["params"]["type"] = "limit";
+
+        return sendRequest(order);
+    }
+
+    Json::Value cancelOrder(int orderId) {
+        Json::Value cancel;
+        cancel["jsonrpc"] = "2.0";
+        cancel["id"] = 1;
+        cancel["method"] = "private/cancel";
+        cancel["params"]["order_id"] = orderId;
+
+        return sendRequest(cancel);
+    }
+
+    Json::Value modifyOrder(int orderId, double newPrice, double newAmount) {
+        Json::Value modify;
+        modify["jsonrpc"] = "2.0";
+        modify["id"] = 1;
+        modify["method"] = "private/edit";
+        modify["params"]["order_id"] = orderId;
+        modify["params"]["price"] = newPrice;
+        modify["params"]["amount"] = newAmount;
+
+        return sendRequest(modify);
+    }
+
+    Json::Value getOrderBook(const std::string& instrument) {
+        Json::Value request;
+        request["jsonrpc"] = "2.0";
+        request["id"] = 1;
+        request["method"] = "public/get_order_book";
+        request["params"]["instrument_name"] = instrument;
+
+        return sendRequest(request);
+    }
+
+    Json::Value getPositions() {
+        Json::Value request;
+        request["jsonrpc"] = "2.0";
+        request["id"] = 1;
+        request["method"] = "private/get_positions";
+
+        return sendRequest(request);
+    }
+
+private:
+    CURL* curl;
+
+    Json::Value sendRequest(const Json::Value& jsonData) {
+        if (curl) {
+            std::string jsonString = Json::writeString(Json::StreamWriterBuilder(), jsonData);
+            struct curl_slist* headers = NULL;
+            headers = curl_slist_append(headers, "Content-Type: application/json");
+            headers = curl_slist_append(headers, ("Authorization: Bearer " + getAccessToken()).c_str());
+
+            curl_easy_setopt(curl, CURLOPT_URL, BASE_URL.c_str());
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, jsonString.c_str());
+
+            std::string responseString;
+            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+            curl_easy_setopt(curl, CURLOPT_WRITEDATA, &responseString);
+
+            CURLcode res = curl_easy_perform(curl);
+            curl_slist_free_all(headers);
+
+            if (res != CURLE_OK) {
+                std::cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
+                return Json::Value(); // Return empty JSON value on error
+            }
+
+            Json::CharReaderBuilder readerBuilder;
+            Json::Value responseJson;
+            std::istringstream responseStream(responseString);
+            std::string errs;
+
+            if (!Json::parseFromStream(readerBuilder, responseStream, &responseJson, &errs)) {
+                std::cerr << "Failed to parse JSON: " << errs << std::endl;
+                return Json::Value(); // Return empty JSON value on error
+            }
+            
+            return responseJson; // Return the parsed JSON response
+        }
+        
+        return Json::Value(); // Return empty JSON value if CURL is not initialized
+    }
+
+    std::string getAccessToken() {
+        // Implement OAuth2 token retrieval here (not shown for brevity)
+        return ""; // Placeholder for access token
+    }
+
+    static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
+        ((std::string*)userp)->append((char*)contents, size * nmemb);
+        return size * nmemb;
+    }
+};
+
+int main() {
+    DeribitAPI api;
+
+    // Example usage:
+    auto responsePlaceOrder = api.placeOrder("BTC-PERPETUAL", "buy", 1.0, 30000.0);
+    std::cout << "Place Order Response: " << responsePlaceOrder.toStyledString() << std::endl;
+
+    auto responseGetOrderBook = api.getOrderBook("BTC-PERPETUAL");
+    std::cout << "Order Book Response: " << responseGetOrderBook.toStyledString() << std::endl;
+
+    auto responseGetPositions = api.getPositions();
+    std::cout << "Positions Response: " << responseGetPositions.toStyledString() << std::endl;
+
+    return 0;
+}
